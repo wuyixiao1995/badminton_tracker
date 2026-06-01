@@ -1,0 +1,45 @@
+# 大文件
+*.mp4
+*.MP4
+*.avi
+*.mov
+*.mkv
+
+# 模型文件
+*.pt
+*.onnx
+*.pth
+
+# 输出文件
+annotated*.mp4
+scores*.json
+tracks*.jsonl
+score_curve.png
+
+# 调试输出
+debug_frames/
+debug_frames_v2/
+debug_*.png
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 环境
+venv/
+env/
+.venv/
