@@ -8,19 +8,26 @@
 
 ```
 badminton_tracker/
-├── main.py            # 主入口，两阶段流水线（追踪→计分）
-├── calibrator.py      # 球场检测 + 透视变换（白线提取 + 四边形拟合）
-├── tracker.py         # YOLOv8-pose 球员检测与脚部追踪
-├── detector.py        # 就绪状态检测（滑动窗口 + 冷却机制）
-├── scorer.py          # 21分制比分状态机（位置推断得分）
-├── overlay.py         # 标注视频渲染（迷你球场 + 轨迹 + 比分）
-├── models.py          # 数据类定义（Point, PlayerFrame, ReadyEvent 等）
-├── config.py          # 集中管理所有可调参数
-├── court_viewer.py    # 俯视图球场位置回放工具
-├── debug_frames.py    # 调试帧生成（脚部位置 + 球场边界标记）
-├── requirements.txt   # Python 依赖
-├── PROJECT_SPEC.md    # 完整项目规格书
-└── README.md          # 本文件
+├── main.py                  # 主入口，两阶段流水线（追踪→计分）
+├── calibrator.py            # 球场检测 + 透视变换
+├── tracker.py               # YOLOv8-pose 球员检测与脚部追踪
+├── detector.py              # 就绪状态检测（滑动窗口 + 冷却机制）
+├── scorer.py                # 21分制比分状态机（位置推断得分）
+├── overlay.py               # 标注视频渲染（迷你球场 + 轨迹 + 比分）
+├── models.py                # 数据类定义
+├── config.py                # 集中管理所有可调参数
+├── court_viewer.py          # 俯视图球场位置回放工具
+├── debug_frames.py          # 调试帧生成（脚部位置 + 球场边界标记）
+├── tracknetv3_infer.py      # TrackNetV3 羽毛球轨迹推理
+├── tracknet_infer.py        # TrackNet 网球轨迹推理（对比）
+├── visualize_tracknetv3.py  # 轨迹标注可视化
+├── test_shuttle_detect.py   # YOLOv8 羽毛球检测测试
+├── ckpts/                   # TrackNetV3 预训练权重 (Git LFS)
+│   ├── TrackNet_best.pt     #   130 MB 主追踪模型
+│   └── InpaintNet_best.pt   #   6 MB 轨迹修复模型
+├── requirements.txt         # Python 依赖
+├── PROJECT_SPEC.md          # 完整项目规格书
+└── README.md                # 本文件
 ```
 
 ## 快速开始
@@ -156,6 +163,58 @@ OVERLAY_OPACITY = 0.6         # 覆盖层透明度
 | `scores.json` | JSON | 每分时间戳 + 比分 + 发球方 |
 | `score_curve.png` | PNG | 时间-比分曲线图 |
 | `tracks.jsonl` | JSONL | 逐帧球员位置数据 |
+
+## 羽毛球轨迹追踪 (TrackNetV3)
+
+使用 TrackNetV3 深度学习模型直接检测羽毛球轨迹（热力图方式）。
+
+> 论文: [TrackNetV3: Enhancing ShuttleCock Tracking with Augmentations and Trajectory Rectification](https://dl.acm.org/doi/10.1145/3595916.3626370)
+> 性能: **97.5% Accuracy**, 98.6% F1 on Shuttlecock Trajectory Dataset
+
+### 预训练模型
+
+模型权重已通过 Git LFS 上传到 `ckpts/` 目录：
+
+| 文件 | 大小 | 说明 |
+|------|------|------|
+| `ckpts/TrackNet_best.pt` | 130 MB | 主追踪模型（U-Net 热力图） |
+| `ckpts/InpaintNet_best.pt` | 6 MB | 轨迹修复模型（1D CNN） |
+
+如未自动下载 LFS 文件：
+```bash
+git lfs pull
+```
+
+### 运行推理
+
+```bash
+# TrackNetV3 羽毛球专用推理（含时间集成，精度最高）
+python tracknetv3_infer.py --video test_match.mp4 --max-frames 600 --ensemble
+
+# 生成带置信度标注的可视化视频
+python visualize_tracknetv3.py --csv tracknetv3_output_ball.csv --video test_match.mp4
+
+# 网球 TrackNet 对比测试（效果差，仅供参考）
+python tracknet_infer.py --video test_match.mp4 --max-frames 600
+```
+
+### 效果预览
+
+![标注视频](tracknetv3_annotated.mp4)
+
+标注含义：
+- 🟡 **黄色圆圈** = 检测位置（越大置信度越高）
+- 🟡 **虚线** = 连续帧轨迹
+- 🔴 **红色/大圈** = 高速移动帧（很可能是真球）
+
+### 对比测试结果
+
+| 模型 | 训练数据 | 检测率 | 中位速度 | 假阳性率 | 结论 |
+|------|---------|--------|---------|---------|------|
+| TrackNet (网球) | 网球赛事 | 81.7% | 4.5 px/f | ~75% | ❌ 基本是假阳性 |
+| **TrackNetV3** | 羽毛球赛事 | 67.7% | 3.0 px/f | ~75% | ⚠️ 约2-3段疑似真球 |
+
+> 两个模型都训练于专业赛事转播画面，与业余视频差异大。需要后处理过滤（速度阈值）提高可用性。
 
 ## 视频要求
 
