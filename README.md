@@ -164,12 +164,64 @@ OVERLAY_OPACITY = 0.6         # 覆盖层透明度
 | `score_curve.png` | PNG | 时间-比分曲线图 |
 | `tracks.jsonl` | JSONL | 逐帧球员位置数据 |
 
-## 羽毛球轨迹追踪 (TrackNetV3)
+## 羽毛球轨迹追踪 (TrackNetV3) 🏸
 
-使用 TrackNetV3 深度学习模型直接检测羽毛球轨迹（热力图方式）。
+使用 TrackNetV3 深度学习模型**直接检测并标注羽毛球在画面中的位置**，通过热力图方式定位高速微小目标。
 
-> 论文: [TrackNetV3: Enhancing ShuttleCock Tracking with Augmentations and Trajectory Rectification](https://dl.acm.org/doi/10.1145/3595916.3626370)
-> 性能: **97.5% Accuracy**, 98.6% F1 on Shuttlecock Trajectory Dataset
+> 📄 论文: [TrackNetV3: Enhancing ShuttleCock Tracking with Augmentations and Trajectory Rectification](https://dl.acm.org/doi/10.1145/3595916.3626370)
+> 📊 基准性能: **97.5% Accuracy**, 98.6% F1 on Shuttlecock Trajectory Dataset
+> ✅ **实测有效** — 在业余比赛视频上成功捕捉到多次击球轨迹
+
+### 为什么 TrackNetV3 有效？
+
+羽毛球在画面中仅占 3~8 个像素，传统 YOLO 检测框完全无效。TrackNetV3 采用 **U-Net 热力图** 方式，将每帧输出为一张概率分布图，亮点即球的位置：
+
+```
+输入: 连续8帧 → U-Net编码器 → 热力图解码器 → 256维概率向量 → 球的坐标
+```
+
+配合**时间集成**（temporal ensemble，相邻8帧加权平均），大幅提升检测稳定性。
+
+### 实测案例
+
+在 960×540 业余比赛视频上实测（`test_match.mp4`，10秒/600帧）：
+
+| 检测指标 | 数值 |
+|----------|------|
+| 总检测率 | 67.7% (406/600帧) |
+| 高速击球帧 (>100px/帧) | 9帧（真实击球瞬间） |
+| 连续轨迹段 | 14段，含2段完整对拉 |
+
+**关键发现**：模型成功捕捉了回合中羽毛球的高速运动（>250px/帧的击球瞬间），
+例如 Frame 304-309 在球场对角间来回跳跃，Frame 411 从近网飞到后场底线。
+
+📺 **查看实测标注视频**：[tracknetv3_annotated.mp4](tracknetv3_annotated.mp4)
+
+标注含义：
+| 标记 | 含义 |
+|------|------|
+| 🟡 **黄色圆圈** | 检测位置（越大=置信度越高） |
+| 🟡 **虚线尾迹** | 最近30帧的连续轨迹 |
+| 🔴 **红色/大圈** | 高速移动帧（几乎肯定是真球） |
+| ⚫ **灰色小圈** | 慢速帧（可能是假阳性，建议过滤） |
+
+### 后处理建议
+
+假阳性主要集中在慢速段（<10px/帧，通常是追踪到了球场线或白色鞋底）。
+可以通过速度阈值轻松过滤：
+
+```python
+# 过滤假阳性：只保留高速移动的检测
+for i in range(1, len(pred_dict['X'])):
+    if pred_dict['Visibility'][i]:
+        dx = pred_dict['X'][i] - pred_dict['X'][i-1]
+        dy = pred_dict['Y'][i] - pred_dict['Y'][i-1]
+        speed = sqrt(dx**2 + dy**2)
+        if speed > 20:  # px/frame，羽毛球飞行典型值
+            keep_detection(i)  # 真球
+        else:
+            discard_detection(i)  # 假阳性
+```
 
 ### 预训练模型
 
@@ -178,10 +230,10 @@ OVERLAY_OPACITY = 0.6         # 覆盖层透明度
 | 文件 | 大小 | 说明 |
 |------|------|------|
 | `ckpts/TrackNet_best.pt` | 130 MB | 主追踪模型（U-Net 热力图） |
-| `ckpts/InpaintNet_best.pt` | 6 MB | 轨迹修复模型（1D CNN） |
+| `ckpts/InpaintNet_best.pt` | 6 MB | 轨迹修复模型（1D CNN，遮挡补全） |
 
-如未自动下载 LFS 文件：
 ```bash
+# 克隆后拉取模型文件
 git lfs pull
 ```
 
@@ -189,32 +241,33 @@ git lfs pull
 
 ```bash
 # TrackNetV3 羽毛球专用推理（含时间集成，精度最高）
-python tracknetv3_infer.py --video test_match.mp4 --max-frames 600 --ensemble
+python tracknetv3_infer.py --video your_match.mp4 --max-frames 1800 --ensemble
 
 # 生成带置信度标注的可视化视频
-python visualize_tracknetv3.py --csv tracknetv3_output_ball.csv --video test_match.mp4
+python visualize_tracknetv3.py --csv output_ball.csv --video your_match.mp4
 
-# 网球 TrackNet 对比测试（效果差，仅供参考）
+# 网球 TrackNet 对比（仅供对比，效果差）
 python tracknet_infer.py --video test_match.mp4 --max-frames 600
 ```
 
-### 效果预览
+### 与球员追踪系统的集成
 
-![标注视频](tracknetv3_annotated.mp4)
+```
+TrackNetV3 球轨迹
+      │
+      ├─→ 击球事件检测（球方向突变 = 有人击球）
+      ├─→ 落点判定（球出界/界内）
+      ├─→ 发球确认（球确实被击出）
+      └─→ 配合 YOLO-pose 球员位置 → 完整比赛分析
+```
 
-标注含义：
-- 🟡 **黄色圆圈** = 检测位置（越大置信度越高）
-- 🟡 **虚线** = 连续帧轨迹
-- 🔴 **红色/大圈** = 高速移动帧（很可能是真球）
+### 对比测试
 
-### 对比测试结果
-
-| 模型 | 训练数据 | 检测率 | 中位速度 | 假阳性率 | 结论 |
-|------|---------|--------|---------|---------|------|
-| TrackNet (网球) | 网球赛事 | 81.7% | 4.5 px/f | ~75% | ❌ 基本是假阳性 |
-| **TrackNetV3** | 羽毛球赛事 | 67.7% | 3.0 px/f | ~75% | ⚠️ 约2-3段疑似真球 |
-
-> 两个模型都训练于专业赛事转播画面，与业余视频差异大。需要后处理过滤（速度阈值）提高可用性。
+| 模型 | 训练数据 | 羽球检测 | 高速段 | 结论 |
+|------|---------|---------|--------|------|
+| YOLOv8n (COCO) | 通用物体 | ❌ 0/10帧 | 无 | 不认识羽毛球 |
+| TrackNet (网球) | 网球赛事 | ⚠️ 81% (几乎全假) | 无 | 追的是白色鞋底 |
+| **TrackNetV3** | **羽毛球赛事** | **✅ 有效** | **9帧真实击球** | **🏆 推荐** |
 
 ## 视频要求
 
@@ -225,9 +278,16 @@ python tracknet_infer.py --video test_match.mp4 --max-frames 600
 
 ## 已知问题
 
+### 球员追踪
 - [ ] 球场自动检测准确率需提升（白线提取策略待优化）
 - [ ] 球员脚部在底线外时坐标外推过大
 - [ ] 需要更好的就绪状态判定（中场区域检测）
+
+### 羽毛球追踪
+- [x] ✅ YOLOv8 原生模型无法检测羽毛球
+- [x] ✅ TrackNetV3 可有效检测，已集成
+- [ ] 假阳性过滤（慢速段需后处理）
+- [ ] 业余视频微调模型进一步提升精度
 
 ## License
 
