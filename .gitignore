@@ -1,4 +1,4 @@
-# 大文件 (>50MB 的视频)
+# 大文件
 *.mp4
 *.MP4
 *.avi
@@ -8,21 +8,39 @@
 # 测试用小视频例外
 !test_match.mp4
 
-# 模型文件
-*.pt
-*.onnx
-*.pth
+# 标注输出视频例外 (上传供预览)
+!tracknetv3_annotated.mp4
+
+# 模型文件 — ckpts/ 通过 Git LFS 追踪上传
+# YOLO 权重由 ultralytics 自动下载，忽略本地副本
+yolov8*.pt
+yolov8*.pt.lock
+# 网球 TrackNet 权重（效果差，不传）
+tracknet_weights.pt
 
 # 输出文件
 annotated*.mp4
 scores*.json
 tracks*.jsonl
 score_curve.png
+*_ball.csv
+*_track.json
 
 # 调试输出
 debug_frames/
 debug_frames_v2/
+debug_shuttle/
+debug_tracknet/
+debug_tracknetv3/
 debug_*.png
+
+# 第三方仓库 (用户自行clone)
+tracknet_repo/
+tracknetv3_repo/
+
+# 临时下载文件
+*.zip
+!requirements.txt
 
 # Python
 __pycache__/
